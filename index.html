@@ -46,7 +46,7 @@ p{color:var(--mu);font-size:14px;margin:6px 0}
 const $=id=>document.getElementById(id);
 const W=720,H=1280;
 let stream=null,rec=null,take=1,blob1=null,outBlob=null,outExt="mp4";
-let bg=null,loopOn=false,showInset=true;
+let bg=null,loopOn=false,showInset=true,dualMode=false,dualTried=false,rearStream=null;
 const inset={x:W-300-24,y:60,w:300,h:Math.round(300*16/9)};
 function mime(){
   for(const m of ["video/mp4","video/webm;codecs=vp8,opus","video/webm"]){
@@ -62,12 +62,37 @@ async function openCam(facing){
 }
 async function start(){
   try{
+    if(take===1&&!dualTried){dualTried=true;if(await tryDual())return;}
     $("status").textContent="Abriendo cámara...";
     await openCam(take===1?"environment":"user");
-    $("status").textContent="Listo.";
+    $("status").textContent=dualTried&&!dualMode?"Tu iPhone no permite dos cámaras a la vez: usa el modo de dos tomas.":"Listo.";
     if(take===2)prepareCompose();
   }catch(e){
     $("status").textContent="No se pudo abrir la cámara. Revisa permisos o abre el enlace directo en Safari.";
+  }
+}
+async function tryDual(){
+  try{
+    $("status").textContent="Probando las dos cámaras a la vez...";
+    rearStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1080},height:{ideal:1920}},audio:false});
+    const rv=document.createElement("video");rv.muted=true;rv.playsInline=true;rv.srcObject=rearStream;await rv.play();
+    await new Promise(r=>setTimeout(r,1000));
+    const fs=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"user"},width:{ideal:1080},height:{ideal:1920}},audio:true});
+    $("live").srcObject=fs;
+    await new Promise(r=>setTimeout(r,1500));
+    const t=rearStream.getVideoTracks()[0],t0=rv.currentTime;
+    await new Promise(r=>setTimeout(r,500));
+    if(!(t.readyState==="live"&&!t.muted&&rv.currentTime>t0)){
+      fs.getTracks().forEach(x=>x.stop());rearStream.getTracks().forEach(x=>x.stop());rearStream=null;$("live").srcObject=null;
+      return false;
+    }
+    dualMode=true;stream=fs;bg=rv;
+    $("stepTxt").textContent="Dos cámaras activas: trasera (solo video) y frontal (video y audio)";
+    await prepareCompose();
+    return true;
+  }catch(e){
+    if(rearStream){rearStream.getTracks().forEach(x=>x.stop());rearStream=null;}
+    return false;
   }
 }
 function cover(ctx,v,x,y,w,h){
@@ -76,10 +101,12 @@ function cover(ctx,v,x,y,w,h){
   ctx.drawImage(v,(v.videoWidth-sw)/2,(v.videoHeight-sh)/2,sw,sh,x,y,w,h);
 }
 async function prepareCompose(){
+  if(!dualMode){
   bg=document.createElement("video");
   bg.src=URL.createObjectURL(blob1);bg.playsInline=true;bg.muted=true;
   await new Promise(r=>{bg.onloadeddata=r;bg.load()});
   bg.currentTime=0.05;
+  }
   const cv=$("cv");cv.width=W;cv.height=H;
   $("live").style.display="none";cv.style.display="block";
   showInset=true;loopOn=true;
@@ -132,7 +159,7 @@ async function prepareCompose(){
 $("recBtn").onclick=()=>{
   if(rec&&rec.state==="recording"){rec.stop();return}
   if(!stream){start();return}
-  if(take===1){
+  if(take===1&&!dualMode){
     const chunks=[],m=mime();
     rec=new MediaRecorder(stream,m?{mimeType:m}:undefined);
     rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
@@ -153,7 +180,7 @@ $("recBtn").onclick=()=>{
     rec=new MediaRecorder(cs,m?{mimeType:m}:undefined);
     rec.ondataavailable=e=>{if(e.data.size)parts.push(e.data)};
     rec.onstop=()=>{
-      loopOn=false;bg.pause();
+      loopOn=false;bg.pause();if(rearStream)rearStream.getTracks().forEach(t=>t.stop());
       stream.getTracks().forEach(t=>t.stop());stream=null;
       outBlob=new Blob(parts,{type:rec.mimeType||"video/mp4"});
       outExt=(rec.mimeType||"").includes("webm")?"webm":"mp4";
@@ -166,7 +193,7 @@ $("recBtn").onclick=()=>{
     };
     
     rec.start();
-    bg.currentTime=0;bg.play().catch(()=>{});
+    if(!dualMode){bg.currentTime=0;bg.play().catch(()=>{});}
     $("recBtn").textContent="■ Detener";
     $("status").textContent="Grabando... mueve el recuadro con el dedo.";
   }
