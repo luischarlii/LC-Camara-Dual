@@ -11,11 +11,11 @@
 body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif;padding:16px;max-width:520px;margin-inline:auto}
 h1{font-size:22px;margin:4px 0 12px}
 .card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:12px}
-video{width:100%;border-radius:10px;background:#000;max-height:50vh}
+.box{height:62vh;aspect-ratio:9/16;max-width:100%;margin:8px auto;border-radius:10px;background:#000;display:block;object-fit:cover}
+#cv{touch-action:none}
 button{width:100%;padding:14px;border:0;border-radius:12px;font-size:16px;font-weight:600;background:var(--ac);color:#fff;margin-top:8px}
 button.sec{background:var(--bg);color:var(--fg);border:1px solid var(--mu)}
 button:disabled{opacity:.5}
-select{width:100%;padding:10px;border-radius:10px;font-size:16px;margin-top:6px}
 p{color:var(--mu);font-size:14px;margin:6px 0}
 .step{font-weight:700}
 </style>
@@ -24,192 +24,145 @@ p{color:var(--mu);font-size:14px;margin:6px 0}
 <h1>📷 Cámara Dual</h1>
 
 <div class="card">
-<div class="step" id="stepTxt">Paso 1: graba con la cámara trasera (esta toma es el fondo)</div>
-<video id="live" playsinline muted autoplay></video>
-<canvas id="cv" style="display:none;width:100%;border-radius:10px;max-height:50vh;background:#000"></canvas>
-<p>Diseño para la toma 2 (se graba ya combinada):</p>
-<select id="lay2"><option value="pip">Imagen en imagen (frontal en recuadro)</option><option value="side">Lado a lado</option><option value="stack">Uno arriba y otro abajo</option></select>
+<div class="step" id="stepTxt">Toma 1: cámara trasera (será el recuadro)</div>
+<video id="live" class="box" playsinline muted autoplay></video>
+<canvas id="cv" class="box" style="display:none"></canvas>
 <button id="recBtn">● Iniciar grabación</button>
 <p id="status"></p>
 </div>
 
-<div class="card" id="prevCard" style="display:none">
-<div class="step">Tomas grabadas</div>
-<p>Toma 1 (trasera) y toma 2 (frontal)</p>
-<video id="v1" playsinline controls></video>
-<video id="v2" playsinline controls style="margin-top:8px"></video>
-<p>Diseño del video final:</p>
-<select id="layout">
-<option value="pip">Imagen en imagen (frontal en recuadro)</option>
-<option value="side">Lado a lado</option>
-<option value="stack">Uno arriba y otro abajo</option>
-</select>
-<button id="mixBtn">Combinar en un solo video</button>
-</div>
-
 <div class="card" id="outCard" style="display:none">
-<div class="step">Video final</div>
-<video id="out" playsinline controls></video>
-<button id="shareBtn">Guardar / compartir</button>
-<p>Si no abre el menú, mantén presionado el video y elige guardar.</p>
+<div class="step">Video final (9:16)</div>
+<video id="out" class="box" playsinline controls></video>
+<button id="shareBtn">Guardar en Fototeca</button>
+<p>En el menú que abre, elige "Guardar video". Si no abre, mantén presionado el video.</p>
 </div>
 
 <button class="sec" id="resetBtn">Empezar de nuevo</button>
 
 <script>
 const $=id=>document.getElementById(id);
-let stream=null,rec=null,chunks=[],take=1,blobs=[null,null],outBlob=null,outExt="mp4";
+const W=720,H=1280;
+let stream=null,rec=null,take=1,blob1=null,outBlob=null,outExt="mp4";
+let bg=null,loopOn=false,showInset=true;
+const inset={x:W-300-24,y:60,w:300,h:Math.round(300*16/9)};
 function mime(){
-  const c=["video/mp4","video/webm;codecs=vp8,opus","video/webm"];
-  for(const m of c){if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m))return m}
+  for(const m of ["video/mp4","video/webm;codecs=vp8,opus","video/webm"]){
+    if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m))return m;
+  }
   return "";
 }
 async function openCam(facing){
   if(stream)stream.getTracks().forEach(t=>t.stop());
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:true});
+  stream=await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:{ideal:facing},width:{ideal:1080},height:{ideal:1920}},audio:true});
   $("live").srcObject=stream;
 }
 async function start(){
   try{
     $("status").textContent="Abriendo cámara...";
     await openCam(take===1?"environment":"user");
-    $("status").textContent="Listo. Toca para grabar.";
+    $("status").textContent="Listo.";
+    if(take===2)prepareCompose();
   }catch(e){
-    $("status").textContent="No se pudo abrir la cámara. Revisa permisos o abre este enlace directo en Safari.";
+    $("status").textContent="No se pudo abrir la cámara. Revisa permisos o abre el enlace directo en Safari.";
   }
 }
+function cover(ctx,v,x,y,w,h){
+  if(!v||!v.videoWidth)return;
+  const r=Math.max(w/v.videoWidth,h/v.videoHeight),sw=w/r,sh=h/r;
+  ctx.drawImage(v,(v.videoWidth-sw)/2,(v.videoHeight-sh)/2,sw,sh,x,y,w,h);
+}
+async function prepareCompose(){
+  bg=document.createElement("video");
+  bg.src=URL.createObjectURL(blob1);bg.playsInline=true;bg.muted=true;
+  await new Promise(r=>{bg.onloadeddata=r;bg.load()});
+  bg.currentTime=0.05;
+  const cv=$("cv");cv.width=W;cv.height=H;
+  $("live").style.display="none";cv.style.display="block";
+  showInset=true;loopOn=true;
+  const ctx=cv.getContext("2d");
+  (function draw(){
+    ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);
+    cover(ctx,$("live"),0,0,W,H);
+    if(showInset){
+      cover(ctx,bg,inset.x,inset.y,inset.w,inset.h);
+      ctx.strokeStyle="#fff";ctx.lineWidth=4;ctx.strokeRect(inset.x,inset.y,inset.w,inset.h);
+    }
+    if(loopOn)requestAnimationFrame(draw);
+  })();
+  $("status").textContent="Arrastra el recuadro con el dedo; pellizca para cambiar su tamaño.";
+}
+/* mover / pellizcar el recuadro */
+(function(){
+  const cv=$("cv"),pts=new Map();let pd=0;
+  const toC=e=>{const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}};
+  const inside=p=>p.x>=inset.x&&p.x<=inset.x+inset.w&&p.y>=inset.y&&p.y<=inset.y+inset.h;
+  const dist=()=>{const a=[...pts.values()];return a.length<2?0:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)};
+  const clamp=()=>{
+    inset.w=Math.max(160,Math.min(W,inset.w));inset.h=Math.round(inset.w*16/9);
+    inset.x=Math.max(0,Math.min(W-inset.w,inset.x));inset.y=Math.max(0,Math.min(H-inset.h,inset.y));
+  };
+  cv.addEventListener("pointerdown",e=>{
+    const p=toC(e);
+    if(inside(p)||pts.size>0){pts.set(e.pointerId,p);cv.setPointerCapture(e.pointerId);pd=dist();}
+  });
+  cv.addEventListener("pointermove",e=>{
+    if(!pts.has(e.pointerId))return;
+    const p=toC(e),o=pts.get(e.pointerId);
+    pts.set(e.pointerId,p);
+    if(pts.size===1){inset.x+=p.x-o.x;inset.y+=p.y-o.y;}
+    else{
+      const d=dist();
+      if(pd>0){const cx=inset.x+inset.w/2,cy=inset.y+inset.h/2;inset.w*=d/pd;inset.h=inset.w*16/9;inset.x=cx-inset.w/2;inset.y=cy-inset.h/2;}
+      pd=d;
+    }
+    clamp();
+  });
+  const up=e=>{pts.delete(e.pointerId);pd=dist();};
+  cv.addEventListener("pointerup",up);cv.addEventListener("pointercancel",up);
+})();
 $("recBtn").onclick=()=>{
   if(rec&&rec.state==="recording"){rec.stop();return}
   if(!stream){start();return}
-  if(take===2){recComposite();return}
-  chunks=[];
-  const m=mime();
-  rec=new MediaRecorder(stream,m?{mimeType:m}:undefined);
-  rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
-  rec.onstop=()=>{
-    blobs[take-1]=new Blob(chunks,{type:rec.mimeType||"video/mp4"});
-    outExt=(rec.mimeType||"").includes("webm")?"webm":"mp4";
-    $("recBtn").textContent="● Iniciar grabación";
-    if(take===1){
-      take=2;$("stepTxt").textContent="Paso 2: graba con la cámara frontal";
-      $("status").textContent="Toma 1 guardada.";
-      stream.getTracks().forEach(t=>t.stop());stream=null;start();
-    }else{
-      stream.getTracks().forEach(t=>t.stop());stream=null;$("live").srcObject=null;
-      $("v1").src=URL.createObjectURL(blobs[0]);
-      $("v2").src=URL.createObjectURL(blobs[1]);
-      $("prevCard").style.display="block";
-      $("stepTxt").textContent="Listo: ya tienes las dos tomas";
-      $("recBtn").disabled=true;
-    }
-  };
-  rec.start();
-  $("recBtn").textContent="■ Detener";
-  $("status").textContent="Grabando...";
-};
-async function recComposite(){
-  const bg=document.createElement("video");
-  bg.src=URL.createObjectURL(blobs[0]);bg.playsInline=true;bg.muted=true;
-  await new Promise(r=>{bg.onloadeddata=r;bg.load()});
-  const cv=$("cv"),live=$("live"),W=720,H=1280,lay=$("lay2").value;
-  cv.width=W;cv.height=H;const ctx=cv.getContext("2d");
-  live.style.display="none";cv.style.display="block";
-  function cover(v,x,y,w,h){
-    if(!v.videoWidth)return;
-    const r=Math.max(w/v.videoWidth,h/v.videoHeight),sw=w/r,sh=h/r;
-    ctx.drawImage(v,(v.videoWidth-sw)/2,(v.videoHeight-sh)/2,sw,sh,x,y,w,h);
+  if(take===1){
+    const chunks=[],m=mime();
+    rec=new MediaRecorder(stream,m?{mimeType:m}:undefined);
+    rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+    rec.onstop=()=>{
+      blob1=new Blob(chunks,{type:rec.mimeType||"video/mp4"});
+      take=2;
+      $("stepTxt").textContent="Toma 2: cámara frontal (graba todo)";
+      $("recBtn").textContent="● Iniciar grabación";
+      start();
+    };
+    rec.start();
+    $("recBtn").textContent="■ Detener";
+    $("status").textContent="Grabando toma 1...";
+  }else{
+    const cs=$("cv").captureStream(30);
+    stream.getAudioTracks().forEach(t=>cs.addTrack(t));
+    const parts=[],m=mime();
+    rec=new MediaRecorder(cs,m?{mimeType:m}:undefined);
+    rec.ondataavailable=e=>{if(e.data.size)parts.push(e.data)};
+    rec.onstop=()=>{
+      loopOn=false;bg.pause();
+      stream.getTracks().forEach(t=>t.stop());stream=null;
+      outBlob=new Blob(parts,{type:rec.mimeType||"video/mp4"});
+      outExt=(rec.mimeType||"").includes("webm")?"webm":"mp4";
+      $("out").src=URL.createObjectURL(outBlob);
+      $("outCard").style.display="block";
+      $("cv").style.display="none";
+      $("recBtn").disabled=true;$("recBtn").textContent="Grabación terminada";
+      $("stepTxt").textContent="Listo: tu video final";
+      $("status").textContent="";
+    };
+    bg.onended=()=>{showInset=false};
+    rec.start();
+    bg.currentTime=0;bg.play().catch(()=>{});
+    $("recBtn").textContent="■ Detener";
+    $("status").textContent="Grabando... mueve el recuadro con el dedo.";
   }
-  let on=true;
-  function draw(){
-    ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);
-    if(lay==="pip"){cover(bg,0,0,W,H);const pw=240,ph=320;cover(live,W-pw-24,24,pw,ph);ctx.strokeStyle="#fff";ctx.lineWidth=4;ctx.strokeRect(W-pw-24,24,pw,ph);}
-    else if(lay==="side"){cover(bg,0,0,W/2,H);cover(live,W/2,0,W/2,H);}
-    else{cover(bg,0,0,W,H/2);cover(live,0,H/2,W,H/2);}
-    if(on)requestAnimationFrame(draw);
-  }
-  const cs=cv.captureStream(30);
-  stream.getAudioTracks().forEach(t=>cs.addTrack(t));
-  const m=mime(),mr=new MediaRecorder(cs,m?{mimeType:m}:undefined),parts=[];
-  mr.ondataavailable=e=>{if(e.data.size)parts.push(e.data)};
-  mr.onstop=()=>{
-    on=false;bg.pause();
-    stream.getTracks().forEach(t=>t.stop());stream=null;
-    outBlob=new Blob(parts,{type:mr.mimeType||"video/mp4"});
-    outExt=(mr.mimeType||"").includes("webm")?"webm":"mp4";
-    $("out").src=URL.createObjectURL(outBlob);
-    $("outCard").style.display="block";
-    cv.style.display="none";
-    $("recBtn").textContent="● Iniciar grabación";$("recBtn").disabled=true;
-    $("stepTxt").textContent="Listo: tu video final";
-    $("status").textContent="";
-  };
-  rec=mr;
-  draw();mr.start();
-  $("recBtn").textContent="■ Detener";
-  $("status").textContent="Grabando sobre la toma 1... se detiene sola al terminar.";
-  bg.onended=()=>{if(mr.state==="recording")mr.stop()};
-  try{await bg.play()}catch(e){}
-}
-$("mixBtn").onclick=async()=>{
-  const btn=$("mixBtn");btn.disabled=true;btn.textContent="Combinando...";
-  try{
-    const a=document.createElement("video"),b=document.createElement("video");
-    for(const [v,bl] of [[a,blobs[0]],[b,blobs[1]]]){v.src=URL.createObjectURL(bl);v.playsInline=true;v.muted=false;v.preload="auto"}
-    await Promise.all([a,b].map(v=>new Promise(r=>{v.onloadedmetadata=r})));
-    const W=720,H=1280,lay=$("layout").value;
-    const cv=document.createElement("canvas");cv.width=W;cv.height=H;
-    const ctx=cv.getContext("2d");
-    const AC=window.AudioContext||window.webkitAudioContext;
-    const ac=new AC();const dest=ac.createMediaStreamDestination();
-    let hasAudio=false;
-    try{
-      for(const v of [a,b]){ac.createMediaElementSource(v).connect(dest);}
-      hasAudio=true;
-    }catch(e){}
-    function cover(v,x,y,w,h){
-      const r=Math.max(w/v.videoWidth,h/v.videoHeight),sw=w/r,sh=h/r;
-      ctx.drawImage(v,(v.videoWidth-sw)/2,(v.videoHeight-sh)/2,sw,sh,x,y,w,h);
-    }
-    function draw(){
-      ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);
-      if(lay==="pip"){
-        cover(a,0,0,W,H);
-        const pw=240,ph=320;
-        cover(b,W-pw-24,24,pw,ph);
-        ctx.strokeStyle="#fff";ctx.lineWidth=4;ctx.strokeRect(W-pw-24,24,pw,ph);
-      }else if(lay==="side"){
-        cover(a,0,0,W/2,H);cover(b,W/2,0,W/2,H);
-      }else{
-        cover(a,0,0,W,H/2);cover(b,0,H/2,W,H/2);
-      }
-    }
-    const cs=cv.captureStream(30);
-    if(hasAudio)dest.stream.getAudioTracks().forEach(t=>cs.addTrack(t));
-    const m=mime(),mr=new MediaRecorder(cs,m?{mimeType:m}:undefined),parts=[];
-    mr.ondataavailable=e=>{if(e.data.size)parts.push(e.data)};
-    const done=new Promise(r=>{mr.onstop=r});
-    await ac.resume();
-    mr.start();
-    a.currentTime=0;b.currentTime=0;
-    await Promise.all([a.play(),b.play()]);
-    let timer=setInterval(draw,1000/30);
-    await new Promise(r=>{
-      const chk=setInterval(()=>{
-        if(a.ended&&b.ended){clearInterval(chk);r()}
-        else if(a.ended&&!b.paused){}
-      },200);
-    });
-    clearInterval(timer);
-    mr.stop();await done;
-    outBlob=new Blob(parts,{type:mr.mimeType||"video/mp4"});
-    outExt=(mr.mimeType||"").includes("webm")?"webm":"mp4";
-    $("out").src=URL.createObjectURL(outBlob);
-    $("outCard").style.display="block";
-    btn.textContent="Combinar de nuevo";
-  }catch(e){
-    btn.textContent="Error al combinar, intenta otra vez";
-  }
-  btn.disabled=false;
 };
 $("shareBtn").onclick=async()=>{
   if(!outBlob)return;
