@@ -24,9 +24,11 @@ p{color:var(--mu);font-size:14px;margin:6px 0}
 <h1>📷 Cámara Dual</h1>
 
 <div class="card">
-<div class="step" id="stepTxt">Toma 1: cámara trasera (será el recuadro)</div>
+<div class="step" id="stepTxt">Toma 1: cámara trasera (será el fondo)</div>
 <video id="live" class="box" playsinline muted autoplay></video>
 <canvas id="cv" class="box" style="display:none"></canvas>
+<p>Diseño de la toma 2 (puedes cambiarlo mientras grabas):</p>
+<select id="lay" style="width:100%;padding:10px;border-radius:10px;font-size:16px"><option value="pip">Frontal en recuadro (se mueve y cambia de tamaño)</option><option value="top">Frontal en media pantalla de arriba</option><option value="bottom">Frontal en media pantalla de abajo</option></select>
 <button id="recBtn">● Iniciar grabación</button>
 <p id="status"></p>
 </div>
@@ -84,10 +86,15 @@ async function prepareCompose(){
   const ctx=cv.getContext("2d");
   (function draw(){
     ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);
-    cover(ctx,$("live"),0,0,W,H);
-    if(showInset){
-      cover(ctx,bg,inset.x,inset.y,inset.w,inset.h);
+    const lay=$("lay").value;
+    if(lay==="pip"){
+      cover(ctx,bg,0,0,W,H);
+      cover(ctx,$("live"),inset.x,inset.y,inset.w,inset.h);
       ctx.strokeStyle="#fff";ctx.lineWidth=4;ctx.strokeRect(inset.x,inset.y,inset.w,inset.h);
+    }else if(lay==="top"){
+      cover(ctx,$("live"),0,0,W,H/2);cover(ctx,bg,0,H/2,W,H/2);
+    }else{
+      cover(ctx,bg,0,0,W,H/2);cover(ctx,$("live"),0,H/2,W,H/2);
     }
     if(loopOn)requestAnimationFrame(draw);
   })();
@@ -97,7 +104,7 @@ async function prepareCompose(){
 (function(){
   const cv=$("cv"),pts=new Map();let pd=0;
   const toC=e=>{const r=cv.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height}};
-  const inside=p=>p.x>=inset.x&&p.x<=inset.x+inset.w&&p.y>=inset.y&&p.y<=inset.y+inset.h;
+  const inside=p=>$("lay").value==="pip"&&p.x>=inset.x&&p.x<=inset.x+inset.w&&p.y>=inset.y&&p.y<=inset.y+inset.h;
   const dist=()=>{const a=[...pts.values()];return a.length<2?0:Math.hypot(a[0].x-a[1].x,a[0].y-a[1].y)};
   const clamp=()=>{
     inset.w=Math.max(160,Math.min(W,inset.w));inset.h=Math.round(inset.w*16/9);
@@ -132,7 +139,7 @@ $("recBtn").onclick=()=>{
     rec.onstop=()=>{
       blob1=new Blob(chunks,{type:rec.mimeType||"video/mp4"});
       take=2;
-      $("stepTxt").textContent="Toma 2: cámara frontal (graba todo)";
+      $("stepTxt").textContent="Toma 2: cámara frontal (con tu audio)";
       $("recBtn").textContent="● Iniciar grabación";
       start();
     };
@@ -157,7 +164,7 @@ $("recBtn").onclick=()=>{
       $("stepTxt").textContent="Listo: tu video final";
       $("status").textContent="";
     };
-    bg.onended=()=>{showInset=false};
+    
     rec.start();
     bg.currentTime=0;bg.play().catch(()=>{});
     $("recBtn").textContent="■ Detener";
