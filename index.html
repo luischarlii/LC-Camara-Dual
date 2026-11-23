@@ -24,8 +24,11 @@ p{color:var(--mu);font-size:14px;margin:6px 0}
 <h1>📷 Cámara Dual</h1>
 
 <div class="card">
-<div class="step" id="stepTxt">Paso 1: graba con la cámara trasera</div>
+<div class="step" id="stepTxt">Paso 1: graba con la cámara trasera (esta toma es el fondo)</div>
 <video id="live" playsinline muted autoplay></video>
+<canvas id="cv" style="display:none;width:100%;border-radius:10px;max-height:50vh;background:#000"></canvas>
+<p>Diseño para la toma 2 (se graba ya combinada):</p>
+<select id="lay2"><option value="pip">Imagen en imagen (frontal en recuadro)</option><option value="side">Lado a lado</option><option value="stack">Uno arriba y otro abajo</option></select>
 <button id="recBtn">● Iniciar grabación</button>
 <p id="status"></p>
 </div>
@@ -78,6 +81,7 @@ async function start(){
 $("recBtn").onclick=()=>{
   if(rec&&rec.state==="recording"){rec.stop();return}
   if(!stream){start();return}
+  if(take===2){recComposite();return}
   chunks=[];
   const m=mime();
   rec=new MediaRecorder(stream,m?{mimeType:m}:undefined);
@@ -103,6 +107,49 @@ $("recBtn").onclick=()=>{
   $("recBtn").textContent="■ Detener";
   $("status").textContent="Grabando...";
 };
+async function recComposite(){
+  const bg=document.createElement("video");
+  bg.src=URL.createObjectURL(blobs[0]);bg.playsInline=true;bg.muted=true;
+  await new Promise(r=>{bg.onloadeddata=r;bg.load()});
+  const cv=$("cv"),live=$("live"),W=720,H=1280,lay=$("lay2").value;
+  cv.width=W;cv.height=H;const ctx=cv.getContext("2d");
+  live.style.display="none";cv.style.display="block";
+  function cover(v,x,y,w,h){
+    if(!v.videoWidth)return;
+    const r=Math.max(w/v.videoWidth,h/v.videoHeight),sw=w/r,sh=h/r;
+    ctx.drawImage(v,(v.videoWidth-sw)/2,(v.videoHeight-sh)/2,sw,sh,x,y,w,h);
+  }
+  let on=true;
+  function draw(){
+    ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);
+    if(lay==="pip"){cover(bg,0,0,W,H);const pw=240,ph=320;cover(live,W-pw-24,24,pw,ph);ctx.strokeStyle="#fff";ctx.lineWidth=4;ctx.strokeRect(W-pw-24,24,pw,ph);}
+    else if(lay==="side"){cover(bg,0,0,W/2,H);cover(live,W/2,0,W/2,H);}
+    else{cover(bg,0,0,W,H/2);cover(live,0,H/2,W,H/2);}
+    if(on)requestAnimationFrame(draw);
+  }
+  const cs=cv.captureStream(30);
+  stream.getAudioTracks().forEach(t=>cs.addTrack(t));
+  const m=mime(),mr=new MediaRecorder(cs,m?{mimeType:m}:undefined),parts=[];
+  mr.ondataavailable=e=>{if(e.data.size)parts.push(e.data)};
+  mr.onstop=()=>{
+    on=false;bg.pause();
+    stream.getTracks().forEach(t=>t.stop());stream=null;
+    outBlob=new Blob(parts,{type:mr.mimeType||"video/mp4"});
+    outExt=(mr.mimeType||"").includes("webm")?"webm":"mp4";
+    $("out").src=URL.createObjectURL(outBlob);
+    $("outCard").style.display="block";
+    cv.style.display="none";
+    $("recBtn").textContent="● Iniciar grabación";$("recBtn").disabled=true;
+    $("stepTxt").textContent="Listo: tu video final";
+    $("status").textContent="";
+  };
+  rec=mr;
+  draw();mr.start();
+  $("recBtn").textContent="■ Detener";
+  $("status").textContent="Grabando sobre la toma 1... se detiene sola al terminar.";
+  bg.onended=()=>{if(mr.state==="recording")mr.stop()};
+  try{await bg.play()}catch(e){}
+}
 $("mixBtn").onclick=async()=>{
   const btn=$("mixBtn");btn.disabled=true;btn.textContent="Combinando...";
   try{
