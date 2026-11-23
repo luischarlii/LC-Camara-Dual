@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Cámara Dual</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{--bg:#f5f5f7;--fg:#111;--card:#fff;--ac:#d9480f;--mu:#666;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111;--fg:#f2f2f2;--card:#1d1d1f;--mu:#999}}
+:root[data-theme="dark"]{--bg:#111;--fg:#f2f2f2;--card:#1d1d1f;--mu:#999}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif;padding:16px;max-width:520px;margin-inline:auto}
+h1{font-size:22px;margin:4px 0 12px}
+.card{background:var(--card);border-radius:14px;padding:14px;margin-bottom:12px}
+video{width:100%;border-radius:10px;background:#000;max-height:50vh}
+button{width:100%;padding:14px;border:0;border-radius:12px;font-size:16px;font-weight:600;background:var(--ac);color:#fff;margin-top:8px}
+button.sec{background:var(--bg);color:var(--fg);border:1px solid var(--mu)}
+button:disabled{opacity:.5}
+select{width:100%;padding:10px;border-radius:10px;font-size:16px;margin-top:6px}
+p{color:var(--mu);font-size:14px;margin:6px 0}
+.step{font-weight:700}
+</style>
+</head>
+<body>
+<h1>📷 Cámara Dual</h1>
+
+<div class="card">
+<div class="step" id="stepTxt">Paso 1: graba con la cámara trasera</div>
+<video id="live" playsinline muted autoplay></video>
+<button id="recBtn">● Iniciar grabación</button>
+<p id="status"></p>
+</div>
+
+<div class="card" id="prevCard" style="display:none">
+<div class="step">Tomas grabadas</div>
+<p>Toma 1 (trasera) y toma 2 (frontal)</p>
+<video id="v1" playsinline controls></video>
+<video id="v2" playsinline controls style="margin-top:8px"></video>
+<p>Diseño del video final:</p>
+<select id="layout">
+<option value="pip">Imagen en imagen (frontal en recuadro)</option>
+<option value="side">Lado a lado</option>
+<option value="stack">Uno arriba y otro abajo</option>
+</select>
+<button id="mixBtn">Combinar en un solo video</button>
+</div>
+
+<div class="card" id="outCard" style="display:none">
+<div class="step">Video final</div>
+<video id="out" playsinline controls></video>
+<button id="shareBtn">Guardar / compartir</button>
+<p>Si no abre el menú, mantén presionado el video y elige guardar.</p>
+</div>
+
+<button class="sec" id="resetBtn">Empezar de nuevo</button>
+
+<script>
+const $=id=>document.getElementById(id);
+let stream=null,rec=null,chunks=[],take=1,blobs=[null,null],outBlob=null,outExt="mp4";
+function mime(){
+  const c=["video/mp4","video/webm;codecs=vp8,opus","video/webm"];
+  for(const m of c){if(window.MediaRecorder&&MediaRecorder.isTypeSupported(m))return m}
+  return "";
+}
+async function openCam(facing){
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facing},width:{ideal:1280},height:{ideal:720}},audio:true});
+  $("live").srcObject=stream;
+}
+async function start(){
+  try{
+    $("status").textContent="Abriendo cámara...";
+    await openCam(take===1?"environment":"user");
+    $("status").textContent="Listo. Toca para grabar.";
+  }catch(e){
+    $("status").textContent="No se pudo abrir la cámara. Revisa permisos o abre este enlace directo en Safari.";
+  }
+}
+$("recBtn").onclick=()=>{
+  if(rec&&rec.state==="recording"){rec.stop();return}
+  if(!stream){start();return}
+  chunks=[];
+  const m=mime();
+  rec=new MediaRecorder(stream,m?{mimeType:m}:undefined);
+  rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+  rec.onstop=()=>{
+    blobs[take-1]=new Blob(chunks,{type:rec.mimeType||"video/mp4"});
+    outExt=(rec.mimeType||"").includes("webm")?"webm":"mp4";
+    $("recBtn").textContent="● Iniciar grabación";
+    if(take===1){
+      take=2;$("stepTxt").textContent="Paso 2: graba con la cámara frontal";
+      $("status").textContent="Toma 1 guardada.";
+      stream.getTracks().forEach(t=>t.stop());stream=null;start();
+    }else{
+      stream.getTracks().forEach(t=>t.stop());stream=null;$("live").srcObject=null;
+      $("v1").src=URL.createObjectURL(blobs[0]);
+      $("v2").src=URL.createObjectURL(blobs[1]);
+      $("prevCard").style.display="block";
+      $("stepTxt").textContent="Listo: ya tienes las dos tomas";
+      $("recBtn").disabled=true;
+    }
+  };
+  rec.start();
+  $("recBtn").textContent="■ Detener";
+  $("status").textContent="Grabando...";
+};
+$("mixBtn").onclick=async()=>{
+  const btn=$("mixBtn");btn.disabled=true;btn.textContent="Combinando...";
+  try{
+    const a=document.createElement("video"),b=document.createElement("video");
+    for(const [v,bl] of [[a,blobs[0]],[b,blobs[1]]]){v.src=URL.createObjectURL(bl);v.playsInline=true;v.muted=false;v.preload="auto"}
+    await Promise.all([a,b].map(v=>new Promise(r=>{v.onloadedmetadata=r})));
+    const W=720,H=1280,lay=$("layout").value;
+    const cv=document.createElement("canvas");cv.width=W;cv.height=H;
+    const ctx=cv.getContext("2d");
+    const AC=window.AudioContext||window.webkitAudioContext;
+    const ac=new AC();const dest=ac.createMediaStreamDestination();
+    let hasAudio=false;
+    try{
+      for(const v of [a,b]){ac.createMediaElementSource(v).connect(dest);}
+      hasAudio=true;
+    }catch(e){}
+    function cover(v,x,y,w,h){
+      const r=Math.max(w/v.videoWidth,h/v.videoHeight),sw=w/r,sh=h/r;
+      ctx.drawImage(v,(v.videoWidth-sw)/2,(v.videoHeight-sh)/2,sw,sh,x,y,w,h);
+    }
+    function draw(){
+      ctx.fillStyle="#000";ctx.fillRect(0,0,W,H);
+      if(lay==="pip"){
+        cover(a,0,0,W,H);
+        const pw=240,ph=320;
+        cover(b,W-pw-24,24,pw,ph);
+        ctx.strokeStyle="#fff";ctx.lineWidth=4;ctx.strokeRect(W-pw-24,24,pw,ph);
+      }else if(lay==="side"){
+        cover(a,0,0,W/2,H);cover(b,W/2,0,W/2,H);
+      }else{
+        cover(a,0,0,W,H/2);cover(b,0,H/2,W,H/2);
+      }
+    }
+    const cs=cv.captureStream(30);
+    if(hasAudio)dest.stream.getAudioTracks().forEach(t=>cs.addTrack(t));
+    const m=mime(),mr=new MediaRecorder(cs,m?{mimeType:m}:undefined),parts=[];
+    mr.ondataavailable=e=>{if(e.data.size)parts.push(e.data)};
+    const done=new Promise(r=>{mr.onstop=r});
+    await ac.resume();
+    mr.start();
+    a.currentTime=0;b.currentTime=0;
+    await Promise.all([a.play(),b.play()]);
+    let timer=setInterval(draw,1000/30);
+    await new Promise(r=>{
+      const chk=setInterval(()=>{
+        if(a.ended&&b.ended){clearInterval(chk);r()}
+        else if(a.ended&&!b.paused){}
+      },200);
+    });
+    clearInterval(timer);
+    mr.stop();await done;
+    outBlob=new Blob(parts,{type:mr.mimeType||"video/mp4"});
+    outExt=(mr.mimeType||"").includes("webm")?"webm":"mp4";
+    $("out").src=URL.createObjectURL(outBlob);
+    $("outCard").style.display="block";
+    btn.textContent="Combinar de nuevo";
+  }catch(e){
+    btn.textContent="Error al combinar, intenta otra vez";
+  }
+  btn.disabled=false;
+};
+$("shareBtn").onclick=async()=>{
+  if(!outBlob)return;
+  const f=new File([outBlob],"video-dual."+outExt,{type:outBlob.type});
+  try{
+    if(navigator.canShare&&navigator.canShare({files:[f]}))await navigator.share({files:[f]});
+    else $("status").textContent="Mantén presionado el video final para guardarlo.";
+  }catch(e){}
+};
+$("resetBtn").onclick=()=>location.reload();
+start();
+</script>
+</body>
+</html>
